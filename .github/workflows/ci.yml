@@ -1,0 +1,78 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    # Mondays 06:00 UTC — catches a new ESPHome release breaking a build even
+    # when nothing has been pushed. A red run here is the signal to pin
+    # `esphome==<last-good>` in this file until it's fixed.
+    - cron: "0 6 * * 1"
+
+# A newer push supersedes an in-flight run on the same ref.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Fast schema check — gives PR feedback in ~1 min without a toolchain.
+  config:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install esphome
+      - name: Placeholder secrets
+        run: cp secrets.yaml.example secrets.yaml
+      - name: esphome config (all four)
+        run: |
+          status=0
+          for f in dehumidifier-*.yaml; do
+            echo "::group::esphome config $f"
+            esphome config "$f" || status=1
+            echo "::endgroup::"
+          done
+          exit $status
+
+  # Full firmware build — the only thing that actually compiles the lambdas,
+  # checks flash usage, and catches component/framework breakage.
+  compile:
+    needs: config
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        config:
+          - dehumidifier-controller
+          - dehumidifier-plug
+          - dehumidifier-controller-simple
+          - dehumidifier-plug-simple
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # The ESP32 (ESP-IDF) and ESP8266 (Arduino) toolchains are large but
+      # stable — cache them across runs. Keyed loosely so unrelated YAML edits
+      # still hit the cache.
+      - name: Cache toolchains
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.platformio
+            ~/.cache/pip
+          key: pio-${{ runner.os }}-${{ matrix.config }}-${{ hashFiles(format('{0}.yaml', matrix.config), 'packages/*.yaml') }}
+          restore-keys: |
+            pio-${{ runner.os }}-${{ matrix.config }}-
+            pio-${{ runner.os }}-
+
+      - run: pip install esphome
+      - name: Placeholder secrets
+        run: cp secrets.yaml.example secrets.yaml
+      - name: esphome compile ${{ matrix.config }}.yaml
+        run: esphome compile ${{ matrix.config }}.yaml

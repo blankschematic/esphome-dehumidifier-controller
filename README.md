@@ -1,6 +1,7 @@
 # Two-Box Dehumidifier Controller (ESPHome, no Home Assistant)
 
-[![validate](https://github.com/blankschematic/esphome-dehumidifier-controller/actions/workflows/validate.yml/badge.svg)](https://github.com/blankschematic/esphome-dehumidifier-controller/actions/workflows/validate.yml)
+[![ci](https://github.com/blankschematic/esphome-dehumidifier-controller/actions/workflows/ci.yml/badge.svg)](https://github.com/blankschematic/esphome-dehumidifier-controller/actions/workflows/ci.yml)
+[![secret-scan](https://github.com/blankschematic/esphome-dehumidifier-controller/actions/workflows/secret-scan.yml/badge.svg)](https://github.com/blankschematic/esphome-dehumidifier-controller/actions/workflows/secret-scan.yml)
 
 A standalone humidistat for a basement dehumidifier whose built-in control has
 almost no hysteresis and short-cycles the compressor. This replaces it with a

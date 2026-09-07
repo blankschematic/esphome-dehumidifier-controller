@@ -1,0 +1,14 @@
+# gitleaks config — start from the bundled ruleset, then allow the placeholder
+# credentials that are supposed to be in the example file.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Example/placeholder values, not real secrets"
+paths = [
+  '''secrets\.yaml\.example''',
+]
+regexes = [
+  '''change-me-[a-z]+''',
+  '''placeholder-[a-z-]+''',
+]
