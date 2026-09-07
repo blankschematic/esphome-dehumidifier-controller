@@ -1,9 +1,22 @@
 name: ci
 
 on:
+  # Only when something that can actually affect a build changes — a docs-only
+  # commit doesn't rebuild firmware. workflow_dispatch and schedule below have
+  # no path filter, so they always run the full matrix.
   push:
     branches: [main]
+    paths:
+      - '**.yaml'
+      - '**.yml'
+      - 'secrets.yaml.example'
+      - '.github/workflows/**'
   pull_request:
+    paths:
+      - '**.yaml'
+      - '**.yml'
+      - 'secrets.yaml.example'
+      - '.github/workflows/**'
   workflow_dispatch:
   schedule:
     # Mondays 06:00 UTC — catches a new ESPHome release breaking a build even
