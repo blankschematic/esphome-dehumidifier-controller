@@ -1,0 +1,49 @@
+# ESPHome package: "Controller" box hardware — Wemos/LOLIN ESP32 + Sensirion
+# SHT41 on I2C. Low-voltage only; never touches mains.
+#
+# [VERIFY] Wemos/LOLIN ESP32 D1 mini: I2C default SDA=GPIO21, SCL=GPIO22.
+# [VERIFY] SHT41 I2C address 0x44 (fixed on the SHT4x family; 0x45 only on
+#          the -B option part).
+#
+# Example use:
+#   substitutions:
+#     esphome_name: dehumidifier-controller
+#     friendly_name: Dehumidifier Controller
+#   packages:
+#     board:   !include packages/board-esp32-sht41.yaml
+#     network: !include packages/network.yaml
+
+substitutions:
+  model_name: "Wemos ESP32 + SHT41"
+  # Control-loop / sensor sample cadence, and the plug re-assert cadence.
+  sample_interval: "20s"
+
+esphome:
+  name: ${esphome_name}
+  friendly_name: ${friendly_name}
+
+esp32:
+  board: wemos_d1_mini32
+  framework:
+    type: arduino
+
+i2c:
+  sda: GPIO21
+  scl: GPIO22
+  scan: true
+
+sensor:
+  - platform: sht4x
+    address: 0x44
+    update_interval: ${sample_interval}
+    temperature:
+      name: "Temperature"
+      id: sensor_temperature
+    humidity:
+      name: "Humidity"
+      id: sensor_humidity
+
+# HTTP client used to command the plug. url:/headers accept lambdas.
+http_request:
+  timeout: 4s
+  useragent: dehumidifier-controller

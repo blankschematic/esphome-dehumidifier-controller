@@ -1,0 +1,250 @@
+# =============================================================================
+#  Dehumidifier Plug — FULL version                  (Sonoff S31 Lite, ESP8285)
+# =============================================================================
+#  Dumb-but-safe actuator. Carries 120 VAC to the dehumidifier. Obeys the
+#  controller's authenticated REST commands, defaults to OFF, and enforces
+#  safety on its own:
+#
+#    * compressor cool-off      — refuse turn-ON for PLUG_MIN_OFF after any OFF
+#    * power-on delay           — refuse first turn-ON for POWER_ON_DELAY after
+#                                 a power-cycle (an ESP with no synced clock
+#                                 cannot measure real off-time across a reboot)
+#    * stale-command watchdog   — force OFF if no command for STALE_TIMEOUT
+#    * force/bypass button      — operator escape hatch, plug page only
+#
+#  Turn-OFF is always immediate and never gated. See dehumidifier-plug-simple.yaml
+#  for a stripped teaching version with none of the above.
+#
+#  Onboarding: first boot raises AP "dehumidifier-plug"
+#  (password = secret fallback_ap_password). Then browse
+#  http://dehumidifier-plug.local  — note its IP for the controller's target.
+# =============================================================================
+substitutions:
+  esphome_name: dehumidifier-plug
+  friendly_name: Dehumidifier Plug
+  watchdog_check_interval: "10s"
+
+packages:
+  board:      !include packages/board-sonoff-s31-lite.yaml
+  network:    !include packages/network.yaml
+  web_server: !include packages/web-server.yaml
+
+esphome:
+  on_boot:
+    - priority: -100
+      then:
+        - lambda: |-
+            uint32_t now = millis();
+            id(boot_ms) = now;
+            id(last_cmd_ms) = now;          // watchdog grace period after boot
+            id(relay_gpio).turn_off();       // belt & braces (restore_mode ALWAYS_OFF)
+
+# --- persisted operator settings ----------------------------------------
+number:
+  - platform: template
+    name: "Plug min off  (compressor cool-off, min)"
+    id: plug_min_off
+    unit_of_measurement: "min"
+    optimistic: true
+    restore_value: true
+    initial_value: 5
+    min_value: 1
+    max_value: 30
+    step: 1
+    mode: box
+
+  - platform: template
+    name: "Power-on delay  (after plug power-up, min)"
+    id: power_on_delay
+    unit_of_measurement: "min"
+    optimistic: true
+    restore_value: true
+    initial_value: 5          # spec default = PLUG_MIN_OFF
+    min_value: 0
+    max_value: 30
+    step: 1
+    mode: box
+
+  - platform: template
+    name: "Stale-command timeout  (watchdog, min)"
+    id: stale_timeout
+    unit_of_measurement: "min"
+    optimistic: true
+    restore_value: true
+    initial_value: 15
+    min_value: 1
+    max_value: 60
+    step: 1
+    mode: box
+
+# --- runtime state -----------------------------------------------------
+globals:
+  - id: boot_ms
+    type: uint32_t
+    restore_value: false
+    initial_value: "0"
+  - id: last_off_ms
+    type: uint32_t
+    restore_value: false
+    initial_value: "0"
+  - id: have_last_off       # false until the relay has been turned off at least once
+    type: bool
+    restore_value: false
+    initial_value: "false"
+  - id: last_cmd_ms         # any inbound control action (on OR off) refreshes this
+    type: uint32_t
+    restore_value: false
+    initial_value: "0"
+  - id: power_on_cleared    # true once the power-on delay has been satisfied/bypassed
+    type: bool
+    restore_value: false
+    initial_value: "false"
+  - id: holdoff_flag        # last turn-on attempt was refused by a gate
+    type: bool
+    restore_value: false
+    initial_value: "false"
+
+# --- the exposed relay: a template switch that gates every turn-on -------
+switch:
+  - platform: template
+    name: "Relay"
+    id: relay
+    lambda: "return id(relay_gpio).state;"
+    turn_on_action:
+      - lambda: |-
+          uint32_t now = millis();
+          id(last_cmd_ms) = now;                 // refresh watchdog on ANY inbound command
+
+          // --- power-on delay: cannot measure real off-time across a power cut ---
+          if (!id(power_on_cleared)) {
+            uint32_t deadline = id(boot_ms) +
+                (uint32_t)(id(power_on_delay).state * 60000.0f);
+            if ((int32_t)(now - deadline) < 0) {
+              id(holdoff_flag) = true;
+              ESP_LOGW("plug", "turn-on REFUSED: power-on delay, %d s left",
+                       (int)((deadline - now) / 1000));
+              return;
+            }
+            id(power_on_cleared) = true;
+          }
+
+          // --- compressor cool-off (minimum off) ---
+          if (id(have_last_off)) {
+            uint32_t min_off = (uint32_t)(id(plug_min_off).state * 60000.0f);
+            uint32_t elapsed = now - id(last_off_ms);
+            if (elapsed < min_off) {
+              id(holdoff_flag) = true;
+              ESP_LOGW("plug", "turn-on REFUSED: cool-off, %d s left",
+                       (int)((min_off - elapsed) / 1000));
+              return;                              // deferred, not queued
+            }
+          }
+
+          id(holdoff_flag) = false;
+          id(relay_gpio).turn_on();
+    turn_off_action:
+      - lambda: |-
+          id(last_cmd_ms) = millis();             // refresh watchdog
+          id(relay_gpio).turn_off();              // immediate, never gated
+          id(last_off_ms) = millis();
+          id(have_last_off) = true;
+          id(holdoff_flag) = false;
+
+# --- force / bypass — PLUG PAGE ONLY, deliberate override --------------
+button:
+  - platform: template
+    name: "FORCE relay ON (bypass cool-off) — compressor wear risk"
+    id: force_relay_on
+    entity_category: config
+    on_press:
+      - lambda: |-
+          ESP_LOGW("plug", "FORCE ON pressed: bypassing cool-off / power-on delay");
+          id(power_on_cleared) = true;
+          id(holdoff_flag) = false;
+          id(last_cmd_ms) = millis();
+          id(relay_gpio).turn_on();
+
+# --- hold-off indication (why is the relay off?) ----------------------
+binary_sensor:
+  - platform: template
+    name: "Cool-off active"
+    id: cooloff_active
+    device_class: running
+    lambda: |-
+      uint32_t now = millis();
+      if (!id(power_on_cleared)) {
+        uint32_t deadline = id(boot_ms) +
+            (uint32_t)(id(power_on_delay).state * 60000.0f);
+        if ((int32_t)(now - deadline) < 0) return true;
+      }
+      if (id(have_last_off)) {
+        uint32_t min_off = (uint32_t)(id(plug_min_off).state * 60000.0f);
+        if ((now - id(last_off_ms)) < min_off) return true;
+      }
+      return false;
+
+sensor:
+  - platform: template
+    name: "Cool-off remaining"
+    id: cooloff_remaining
+    unit_of_measurement: "s"
+    accuracy_decimals: 0
+    update_interval: 1s
+    lambda: |-
+      uint32_t now = millis();
+      int32_t rem = 0;
+      if (!id(power_on_cleared)) {
+        uint32_t deadline = id(boot_ms) +
+            (uint32_t)(id(power_on_delay).state * 60000.0f);
+        int32_t d = (int32_t)(deadline - now);
+        if (d > rem) rem = d;
+      }
+      if (id(have_last_off)) {
+        uint32_t min_off = (uint32_t)(id(plug_min_off).state * 60000.0f);
+        int32_t d = (int32_t)(min_off - (now - id(last_off_ms)));
+        if (d > rem) rem = d;
+      }
+      return rem > 0 ? rem / 1000.0f : 0.0f;
+
+text_sensor:
+  - platform: template
+    name: "Relay status"
+    id: relay_status
+    update_interval: 1s
+    lambda: |-
+      if (id(relay_gpio).state) return {std::string("ON")};
+      uint32_t now = millis();
+      int32_t rem = 0;
+      if (!id(power_on_cleared)) {
+        uint32_t deadline = id(boot_ms) +
+            (uint32_t)(id(power_on_delay).state * 60000.0f);
+        int32_t d = (int32_t)(deadline - now);
+        if (d > rem) rem = d;
+      }
+      if (id(have_last_off)) {
+        uint32_t min_off = (uint32_t)(id(plug_min_off).state * 60000.0f);
+        int32_t d = (int32_t)(min_off - (now - id(last_off_ms)));
+        if (d > rem) rem = d;
+      }
+      if (rem > 0) {
+        char b[36];
+        snprintf(b, sizeof(b), "HOLD-OFF (%d s left)", (int)(rem / 1000));
+        return {std::string(b)};
+      }
+      return {std::string("OFF")};
+
+# --- stale-command watchdog: controller died -> fail the mains side safe --
+interval:
+  - interval: ${watchdog_check_interval}
+    then:
+      - lambda: |-
+          uint32_t age = millis() - id(last_cmd_ms);
+          if (age > (uint32_t)(id(stale_timeout).state * 60000.0f)) {
+            if (id(relay_gpio).state) {
+              ESP_LOGW("plug", "STALE-COMMAND WATCHDOG: no command for %d s, forcing OFF",
+                       (int)(age / 1000));
+              id(relay_gpio).turn_off();
+              id(last_off_ms) = millis();
+              id(have_last_off) = true;
+            }
+          }

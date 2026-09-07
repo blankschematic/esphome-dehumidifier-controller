@@ -1,0 +1,68 @@
+# ESPHome package: "Plug" box hardware — Sonoff S31 Lite (Wi-Fi, ESP8285).
+#
+# [VERIFY] It must be the Wi-Fi S31 Lite, not the Zigbee S31 Lite. The Zigbee
+#          variant has no ESP chip and cannot be flashed.
+# [VERIFY] Standard S31 / S31 Lite GPIO map:
+#            Relay coil ....... GPIO12
+#            Button ........... GPIO0   (INPUT_PULLUP, active-low)
+#            Green/link LED ... GPIO13  (inverted)
+#          The "Lite" omits the CSE7766 — no UART, no power metering.
+#
+# The physical relay is exposed here as `relay_gpio` with `internal: true` and
+# `restore_mode: ALWAYS_OFF` (safe state on power-up). Nothing should command
+# it directly except the template `switch` `relay` defined in
+# dehumidifier-plug.yaml, whose turn_on_action runs the compressor cool-off
+# gate first. The green LED tracks the *physical* relay.
+#
+# Example use:
+#   substitutions:
+#     esphome_name: dehumidifier-plug
+#     friendly_name: Dehumidifier Plug
+#   packages:
+#     board:   !include packages/board-sonoff-s31-lite.yaml
+#     network: !include packages/network.yaml
+
+substitutions:
+  model_name: "Sonoff S31 Lite"
+
+esphome:
+  name: ${esphome_name}
+  friendly_name: ${friendly_name}
+
+esp8266:
+  board: esp01_1m
+  # Needed for number/text restore_value across reboots.
+  restore_from_flash: true
+
+preferences:
+  flash_write_interval: 1min
+
+switch:
+  - platform: gpio
+    pin: GPIO12
+    id: relay_gpio
+    internal: true
+    restore_mode: ALWAYS_OFF
+    on_turn_on:
+      - output.turn_on: relay_led
+    on_turn_off:
+      - output.turn_off: relay_led
+
+output:
+  - platform: gpio
+    id: relay_led
+    pin:
+      number: GPIO13
+      inverted: true
+
+binary_sensor:
+  - platform: gpio
+    name: "Button"
+    id: on_board_button
+    pin:
+      number: GPIO0
+      mode: INPUT_PULLUP
+      inverted: true
+    # Toggle the *template* relay so the button obeys the cool-off gate too.
+    on_press:
+      - switch.toggle: relay

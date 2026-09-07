@@ -1,0 +1,11 @@
+# Credentials — copy secrets.yaml.example to secrets.yaml and fill in
+/secrets.yaml
+
+# ESPHome build artifacts
+/.esphome/
+/build/
+*.bin
+
+# Python venvs (mirrors the main esphome repo layout)
+/.env*/
+/.venv/

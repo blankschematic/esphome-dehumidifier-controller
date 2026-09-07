@@ -1,0 +1,29 @@
+# ESPHome package: offline-capable local web UI + REST, HTTP basic auth.
+#
+#   version: 2  -> front-end JS is embedded in flash. v3 pulls its JS from a
+#                  CDN at page load, which fails in an offline basement.
+#   local: true -> embed the v2 assets (belt and braces with version: 2).
+#   auth:       -> gates BOTH the web UI and the REST endpoints, so a random
+#                  LAN device cannot POST /switch/relay/turn_on. This is HTTP
+#                  Basic auth over plain HTTP: access control, NOT encryption.
+#
+# NOTE (S31 Lite / ESP8285, ~1 MB flash): web_server v2 + local is the main
+# flash-pressure point. If `dehumidifier-plug.yaml` overflows flash, see the
+# README ("If the plug ever overflows flash") for what to trim.
+#
+# Example use:
+#   packages:
+#     network:    !include packages/network.yaml
+#     web_server: !include packages/web-server.yaml
+
+web_server:
+  port: 80
+  version: 2
+  local: true
+  auth:
+    # 'basic' (base64, reversible) not 'digest': the controller's http_request
+    # sends a static "Authorization: Basic ..." header. Fine on a home LAN;
+    # see README "Security note". Explicit to silence the 2027.1.0 default flip.
+    type: basic
+    username: !secret web_server_username
+    password: !secret web_server_password

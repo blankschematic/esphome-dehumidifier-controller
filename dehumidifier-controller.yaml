@@ -1,0 +1,282 @@
+# =============================================================================
+#  Dehumidifier Controller — FULL version            (Wemos ESP32 + SHT41)
+# =============================================================================
+#  The brain. Reads the SHT41, runs a wide adjustable deadband plus an
+#  anti-short-cycle minimum-off timer, and every ${sample_interval} POSTs the
+#  desired relay state to the plug box (idempotent re-assert, not only on
+#  change). Classifies every command's outcome and shows it in the web UI.
+#
+#  No Home Assistant, no MQTT. See dehumidifier-controller-simple.yaml for a
+#  stripped teaching version.
+#
+#  Onboarding: on first boot the device raises AP "dehumidifier-controller"
+#  (password = secret fallback_ap_password). Join it, enter the real Wi-Fi
+#  creds in the captive portal, then browse http://dehumidifier-controller.local
+# =============================================================================
+substitutions:
+  esphome_name: dehumidifier-controller
+  friendly_name: Dehumidifier Controller
+  sample_interval: "20s"
+  # Consecutive invalid SHT41 reads before the loop forces the relay OFF.
+  bad_reads_to_fail_off: "3"
+  # Same credentials the plug's web_server: auth: checks. The controller builds
+  # its "Authorization: Basic <base64>" header from these at runtime, so there
+  # is nothing to re-encode by hand when the password changes.
+  plug_user: !secret web_server_username
+  plug_pass: !secret web_server_password
+
+packages:
+  board:      !include packages/board-esp32-sht41.yaml
+  network:    !include packages/network.yaml
+  web_server: !include packages/web-server.yaml
+
+esphome:
+  on_boot:
+    - priority: -100
+      then:
+        - lambda: |-
+            // Boot desired state = OFF, and treat boot as "just turned off"
+            // so min_off_min gates the first turn-on.
+            id(want_on) = false;
+            id(cmd_on) = false;
+            uint32_t now = millis();
+            id(last_off_ms) = now;
+            id(last_on_ms) = now;
+            id(state_since_ms) = now;
+            id(last_cmd_ms) = now;
+            id(last_outcome).publish_state("boot");
+            id(desired_state_txt).publish_state("OFF");
+
+# --- persisted operator settings (all shown in web_server, survive reboot) ---
+number:
+  - platform: template
+    name: "RH on  (turn ON at or above %RH)"
+    id: rh_on
+    unit_of_measurement: "%"
+    optimistic: true
+    restore_value: true
+    initial_value: 60
+    min_value: 30
+    max_value: 80
+    step: 1
+    mode: box
+    on_value:
+      # Enforce RH_off < RH_on so a real deadband always exists.
+      - lambda: |-
+          if (id(rh_off).state >= x) {
+            auto c = id(rh_off).make_call();
+            c.set_value(x - 1.0f);
+            c.perform();
+          }
+
+  - platform: template
+    name: "RH off  (turn OFF at or below %RH)"
+    id: rh_off
+    unit_of_measurement: "%"
+    optimistic: true
+    restore_value: true
+    initial_value: 50
+    min_value: 25
+    max_value: 75
+    step: 1
+    mode: box
+    on_value:
+      - lambda: |-
+          if (x >= id(rh_on).state) {
+            auto c = id(rh_off).make_call();
+            c.set_value(id(rh_on).state - 1.0f);
+            c.perform();
+          }
+
+  - platform: template
+    name: "Min off minutes  (anti short-cycle)"
+    id: min_off_min
+    unit_of_measurement: "min"
+    optimistic: true
+    restore_value: true
+    initial_value: 5
+    min_value: 1
+    max_value: 30
+    step: 1
+    mode: box
+
+  - platform: template
+    name: "Min on minutes"
+    id: min_on_min
+    unit_of_measurement: "min"
+    optimistic: true
+    restore_value: true
+    initial_value: 1
+    min_value: 0
+    max_value: 30
+    step: 1
+    mode: box
+
+text:
+  - platform: template
+    name: "Plug target  (hostname or IP)"
+    id: s31_target
+    optimistic: true
+    restore_value: true
+    initial_value: "dehumidifier-plug.local"
+    mode: text
+
+# --- runtime state --------------------------------------------------------
+globals:
+  - id: want_on          # hysteresis output (desired compressor state)
+    type: bool
+    restore_value: false
+    initial_value: "false"
+  - id: cmd_on           # actual command after min-off / min-on gating
+    type: bool
+    restore_value: false
+    initial_value: "false"
+  - id: last_off_ms
+    type: uint32_t
+    restore_value: false
+    initial_value: "0"
+  - id: last_on_ms
+    type: uint32_t
+    restore_value: false
+    initial_value: "0"
+  - id: state_since_ms
+    type: uint32_t
+    restore_value: false
+    initial_value: "0"
+  - id: last_cmd_ms
+    type: uint32_t
+    restore_value: false
+    initial_value: "0"
+  - id: bad_read_count    # consecutive Not a Number humidity reads
+    type: int
+    restore_value: false
+    initial_value: "0"
+
+text_sensor:
+  - platform: template
+    name: "Last command outcome"
+    id: last_outcome
+    update_interval: never
+  - platform: template
+    name: "Desired state"
+    id: desired_state_txt
+    update_interval: never
+
+binary_sensor:
+  - platform: template
+    name: "Plug reachable"
+    id: plug_reachable
+    device_class: connectivity
+  - platform: template
+    name: "Sensor fault (forcing OFF)"
+    id: sensor_fault
+    device_class: problem
+    # ON == the SHT41 has read invalid for >= ${bad_reads_to_fail_off} cycles;
+    # the control loop is holding the dehumidifier OFF until it recovers.
+    lambda: 'return id(bad_read_count) >= ${bad_reads_to_fail_off};'
+
+sensor:
+  - platform: template
+    name: "Seconds since last command"
+    id: since_last_cmd
+    unit_of_measurement: "s"
+    accuracy_decimals: 0
+    update_interval: 5s
+    lambda: 'return (millis() - id(last_cmd_ms)) / 1000.0f;'
+  - platform: template
+    name: "Time in current desired state"
+    id: time_in_state
+    unit_of_measurement: "s"
+    accuracy_decimals: 0
+    update_interval: 5s
+    lambda: 'return (millis() - id(state_since_ms)) / 1000.0f;'
+
+# --- transport: POST the desired state to the plug ------------------------
+script:
+  - id: assert_relay
+    mode: restart
+    parameters:
+      turn_on: bool
+    then:
+      - http_request.post:
+          url: !lambda |-
+            std::string base = "http://" + id(s31_target).state;
+            return base + (turn_on ? "/switch/relay/turn_on"
+                                   : "/switch/relay/turn_off");
+          request_headers:
+            # HTTP Basic auth, built on the fly from the plug_user / plug_pass
+            # secrets so it always matches the plug's web_server: auth:.
+            Authorization: !lambda |-
+              static const std::string HEADER = [] {
+                std::string creds = "${plug_user}:${plug_pass}";
+                return "Basic " + base64_encode(
+                    reinterpret_cast<const uint8_t *>(creds.data()), creds.size());
+              }();
+              return HEADER.c_str();
+          capture_response: false
+          on_response:
+            then:
+              - lambda: |-
+                  id(last_cmd_ms) = millis();
+                  int code = response->status_code;
+                  std::string s;
+                  if (code >= 200 && code < 300)      s = "OK";
+                  else if (code == 401 || code == 403) s = "AUTH FAILED";
+                  else {
+                    char b[24];
+                    snprintf(b, sizeof(b), "HTTP ERROR %d", code);
+                    s = b;
+                  }
+                  id(last_outcome).publish_state(s);
+                  id(plug_reachable).publish_state(true);
+          on_error:
+            then:
+              - lambda: |-
+                  // connection refused / timeout / DNS-or-mDNS resolve failure
+                  id(last_outcome).publish_state("UNREACHABLE");
+                  id(plug_reachable).publish_state(false);
+
+# --- control loop --------------------------------------------------------
+interval:
+  - interval: ${sample_interval}
+    then:
+      - lambda: |-
+          float rh = id(sensor_humidity).state;
+
+          // 1. sensor sanity — never run blind on a dead sensor
+          if (isnan(rh)) {
+            if (id(bad_read_count) < 1000000) id(bad_read_count)++;
+            if (id(bad_read_count) >= ${bad_reads_to_fail_off}) id(want_on) = false;
+          } else {
+            id(bad_read_count) = 0;
+            // 2. hysteresis
+            if (rh >= id(rh_on).state)       id(want_on) = true;
+            else if (rh <= id(rh_off).state) id(want_on) = false;
+            // in the deadband: hold current desired state
+          }
+
+          // 3. gate the transitions
+          uint32_t now = millis();
+          bool cmd = id(cmd_on);
+          if (id(want_on) && !cmd) {
+            uint32_t min_off = (uint32_t)(id(min_off_min).state * 60000.0f);
+            if ((now - id(last_off_ms)) >= min_off) cmd = true;
+          } else if (!id(want_on) && cmd) {
+            uint32_t min_on = (uint32_t)(id(min_on_min).state * 60000.0f);
+            if ((now - id(last_on_ms)) >= min_on) cmd = false;
+          }
+
+          if (cmd != id(cmd_on)) {
+            id(state_since_ms) = now;
+            if (cmd) id(last_on_ms) = now; else id(last_off_ms) = now;
+          }
+          id(cmd_on) = cmd;
+
+          id(desired_state_txt).publish_state(
+            std::string(id(want_on) ? "ON" : "OFF") +
+            (id(want_on) == id(cmd_on) ? "" : " (waiting on timer)"));
+
+      # 4. idempotent re-assert every cycle — a plug reboot re-syncs in <=1 cycle
+      - script.execute:
+          id: assert_relay
+          turn_on: !lambda "return id(cmd_on);"

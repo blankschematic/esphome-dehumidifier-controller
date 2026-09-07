@@ -1,0 +1,187 @@
+# =============================================================================
+#  Dehumidifier Controller — SIMPLE / teaching version   (Wemos ESP32 + SHT41)
+# =============================================================================
+#  The brain, stripped to its essence:
+#    1. read humidity from the SHT41 every ${sample_interval}
+#    2. wide deadband:  RH >= RH_on  -> want ON
+#                       RH <= RH_off -> want OFF
+#                       in between   -> hold
+#    3. anti-short-cycle: don't allow ON until "min off minutes" have passed
+#       since the last OFF
+#    4. every cycle, POST the desired state to the plug (idempotent, so a plug
+#       reboot re-syncs within one cycle)
+#
+#  Deliberately omitted (see dehumidifier-controller.yaml for all of it):
+#    - HTTP basic auth to the plug
+#    - HTTP response-code classification (AUTH FAILED / HTTP ERROR / ...)
+#    - sensor-failure lockout (this version just holds state on a bad read)
+#    - minimum on-time, plug read-back, "time in state" telemetry
+#
+#  One self-contained file on purpose. Fill in secrets.yaml first.
+# =============================================================================
+substitutions:
+  esphome_name: dehumidifier-controller
+  friendly_name: Dehumidifier Controller
+  sample_interval: "20s"
+
+esphome:
+  name: ${esphome_name}
+  friendly_name: ${friendly_name}
+  on_boot:
+    - priority: -100
+      then:
+        # Boot desired state = OFF, and treat boot as "just turned off" so the
+        # min-off timer gates the first turn-on.
+        - lambda: |-
+            id(cmd_on) = false;
+            id(last_off_ms) = millis();
+
+esp32:
+  board: wemos_d1_mini32
+  framework:
+    type: arduino
+
+logger:
+
+api:
+  reboot_timeout: 0s
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  ap:
+    ssid: ${esphome_name}
+    password: !secret fallback_ap_password
+
+captive_portal:
+
+web_server:
+  port: 80
+  version: 2
+  local: true
+
+# Wemos/LOLIN ESP32 D1 mini default I2C pins.
+i2c:
+  sda: GPIO21
+  scl: GPIO22
+
+http_request:
+  timeout: 4s
+
+globals:
+  - id: want_on            # hysteresis output
+    type: bool
+    restore_value: false
+    initial_value: "false"
+  - id: cmd_on             # what we actually command (after the min-off gate)
+    type: bool
+    restore_value: false
+    initial_value: "false"
+  - id: last_off_ms
+    type: uint32_t
+    restore_value: false
+    initial_value: "0"
+
+sensor:
+  - platform: sht4x
+    address: 0x44
+    update_interval: ${sample_interval}
+    temperature:
+      name: "Temperature"
+      id: sensor_temperature
+    humidity:
+      name: "Humidity"
+      id: sensor_humidity
+
+number:
+  - platform: template
+    name: "RH on  (turn ON at or above %RH)"
+    id: rh_on
+    unit_of_measurement: "%"
+    optimistic: true
+    restore_value: true
+    initial_value: 60
+    min_value: 30
+    max_value: 80
+    step: 1
+    mode: box
+  - platform: template
+    name: "RH off  (turn OFF at or below %RH; keep below RH on)"
+    id: rh_off
+    unit_of_measurement: "%"
+    optimistic: true
+    restore_value: true
+    initial_value: 50
+    min_value: 25
+    max_value: 75
+    step: 1
+    mode: box
+  - platform: template
+    name: "Min off minutes  (anti short-cycle)"
+    id: min_off_min
+    unit_of_measurement: "min"
+    optimistic: true
+    restore_value: true
+    initial_value: 5
+    min_value: 1
+    max_value: 30
+    step: 1
+    mode: box
+
+text:
+  - platform: template
+    name: "Plug target  (hostname or IP)"
+    id: s31_target
+    optimistic: true
+    restore_value: true
+    initial_value: "dehumidifier-plug.local"
+    mode: text
+
+text_sensor:
+  - platform: template
+    name: "Last command"
+    id: last_cmd
+    update_interval: never
+
+# --- control loop ------------------------------------------------------
+interval:
+  - interval: ${sample_interval}
+    then:
+      - lambda: |-
+          float rh = id(sensor_humidity).state;
+          if (!isnan(rh)) {
+            if (rh >= id(rh_on).state)       id(want_on) = true;
+            else if (rh <= id(rh_off).state) id(want_on) = false;
+            // in the deadband: hold
+          }
+          // anti-short-cycle gate
+          bool cooling = (millis() - id(last_off_ms)) <
+                         (uint32_t)(id(min_off_min).state * 60000.0f);
+          bool cmd = id(want_on) && !cooling;
+          if (!cmd && id(cmd_on)) id(last_off_ms) = millis();   // just went off
+          id(cmd_on) = cmd;
+      - script.execute: assert_relay
+
+script:
+  - id: assert_relay
+    mode: restart
+    then:
+      - http_request.post:
+          url: !lambda |-
+            std::string u = "http://" + id(s31_target).state +
+              (id(cmd_on) ? "/switch/relay/turn_on" : "/switch/relay/turn_off");
+            return u;
+          capture_response: false
+          on_response:
+            then:
+              - lambda: |-
+                  char b[24];
+                  snprintf(b, sizeof(b), "OK (%d)", response->status_code);
+                  id(last_cmd).publish_state(b);
+          on_error:
+            then:
+              - lambda: 'id(last_cmd).publish_state("unreachable");'

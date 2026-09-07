@@ -1,0 +1,56 @@
+# ESPHome package: standalone Wi-Fi + captive portal, NO Home Assistant, NO MQTT.
+#
+# Differences from a typical HA-connected network config, all required for a
+# headless humidistat:
+#   - api: is present but reboot_timeout is 0s. The native API's default
+#     ~15-minute "no client connected" timeout would otherwise reboot-loop
+#     both devices forever, because nothing ever connects.
+#   - No API encryption key, no "HA API Connection" binary_sensor.
+#   - No SNTP time: — the basement may have no internet, and the design must
+#     be correct with no clock.
+#
+# Example use:
+#   substitutions:
+#     esphome_name: dehumidifier-plug
+#     friendly_name: Dehumidifier Plug
+#   packages:
+#     network: !include packages/network.yaml
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  # First boot, or whenever the target network can't be joined: raise our own
+  # AP so captive_portal can collect the real credentials. The device is
+  # handed to a third party, so the join network is unknown at build time.
+  ap:
+    ssid: ${esphome_name}
+    password: !secret fallback_ap_password
+
+captive_portal:
+
+api:
+  reboot_timeout: 0s
+
+ota:
+  - platform: esphome
+    id: ota_esphome
+    password: !secret ota_password
+
+logger:
+  level: DEBUG
+
+button:
+  - platform: restart
+    name: "Restart"
+
+sensor:
+  - platform: uptime
+    name: "Uptime"
+    id: sys_uptime
+
+text_sensor:
+  - platform: version
+    name: "ESPHome Version"
+  - platform: wifi_info
+    ip_address:
+      name: "IP Address"
