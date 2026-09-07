@@ -22,9 +22,10 @@ for onboarding, so it works on a network it has never seen.
 
 ## Quick start
 
-- **Parts:** a Wemos/LOLIN ESP32 + an SHT4x breakout, a **Wi-Fi** Sonoff S31
-  Lite, a 3.3 V USB-serial adapter, and a computer with Python.
-  ([full list](#what-you-need))
+- **Parts:** a Wemos/LOLIN ESP32 + an SHT4x breakout, a **Wi-Fi** Sonoff S31 or
+  S31 Lite, a 3.3 V USB-serial adapter, and a computer with Python.
+  ([full list](#what-you-need)) — **check the relay can take your dehumidifier's
+  load** ([why](#load-and-relay-rating)).
 - **Build and flash:**
   ```bash
   pip install esphome
@@ -59,7 +60,7 @@ turn-**on** is what the safety timers gate.
 ```text
   ┌─────────────────────────┐     POST /switch/relay/turn_on      ┌─────────────────────────┐
   │  Controller  (Box A)    │     POST /switch/relay/turn_off     │   Plug  (Box B)         │
-  │  Wemos ESP32 + SHT41    │ ─────────────────────────────────▶  │   Sonoff S31 Lite       │
+  │  Wemos ESP32 + SHT41    │ ─────────────────────────────────▶  │   Sonoff S31 / S31 Lite │
   │  deadband + timers,     │ ◀─────────────────────────────────  │   relay + cool-off,     │
   │  low voltage only       │     200 / 401 / timeout             │   watchdog, fail-safe   │
   └─────────────────────────┘                                     └─────────────────────────┘
@@ -99,11 +100,43 @@ to the full plug.
 - **Box A — Controller:** Wemos/LOLIN **ESP32** (4 MB) + Sensirion **SHT41** on
   I²C (SDA `GPIO21`, SCL `GPIO22`, address `0x44`). USB-powered. Never touches
   mains.
-- **Box B — Plug:** **Sonoff S31 Lite (Wi-Fi, ESP8285, ~1 MB).**
-  Relay `GPIO12`, button `GPIO0`, green LED `GPIO13` (inverted).
-  - ⚠️ Must be the **Wi-Fi** S31 Lite. The **Zigbee** S31 Lite has no ESP chip,
-    cannot be flashed, and makes this design impossible.
-  - The "Lite" has no CSE7766 — no power/energy monitoring (out of scope).
+- **Box B — Plug:** a **Wi-Fi Sonoff S31 *or* S31 Lite** (ESP8285, ~1 MB). Same
+  pinout on both — relay `GPIO12`, button `GPIO0`, green LED `GPIO13` (inverted).
+  The full S31 has a CSE7766 power meter; this project simply leaves it
+  unconfigured. The Lite omits it. Either works — power monitoring is not used.
+  - ⚠️ It must be a **Wi-Fi** model. The **Zigbee** S31 / S31 Lite has no ESP
+    chip, cannot be flashed, and makes this design impossible.
+  - **Why a Sonoff and not a bare relay board:** the S31 is an **ETL-listed**
+    (UL-equivalent) appliance. The mains switching, fusing, spacing, and
+    enclosure are all inside a certified product — you never wire, solder, or
+    expose 120 VAC yourself. The ESP32 + sensor side is low-voltage only.
+
+---
+
+## Load and relay rating
+
+**Check this before you plug the dehumidifier in.** The S31's relay is rated
+for a **resistive** load (heaters, lamps). A dehumidifier is a **compressor
+(motor) load**, which is harder on relay contacts:
+
+- **Inrush / locked-rotor current.** When the compressor starts it briefly
+  draws several times its running current. A relay that easily carries the
+  *running* current can still pit or weld its contacts on repeated inrush.
+- **Motor derating.** Relay makers publish a lower rating for motor/inductive
+  loads than the headline resistive figure.
+
+So, before connecting the load:
+
+1. Read the dehumidifier's **nameplate running current** (amps / FLA). This
+   design assumes **≤ ~12 A continuous** on a 120 VAC circuit.
+2. Confirm that against the **S31's own label** — and, if you can find it, the
+   relay part's **motor-load** rating, not just its resistive rating.
+3. If the unit is anywhere near the limit, or you can't establish its inrush,
+   don't switch it directly. Drive a properly-rated contactor from the S31
+   instead (outside this project's scope).
+
+The anti-short-cycle timer helps here too: fewer make/break cycles under load
+means slower contact wear over the relay's life.
 
 ---
 
@@ -111,7 +144,8 @@ to the full plug.
 
 - **Box A:** a Wemos/LOLIN **ESP32** dev board + a Sensirion **SHT4x** breakout
   (SHT41 or SHT40), four jumper wires, a case, a USB power supply.
-- **Box B:** a **Sonoff S31 Lite** (Wi-Fi — see the hardware warning above).
+- **Box B:** a **Wi-Fi Sonoff S31 or S31 Lite** (see the hardware notes and
+  [Load and relay rating](#load-and-relay-rating) above).
 - A **3.3 V USB-to-serial adapter** (CP2102 / CH340 / FT232) to flash the S31
   the first time — plus a way to reach its 4 pads (pogo-pin jig or soldered
   header). The case must be opened.
@@ -318,11 +352,12 @@ for leaving on a shared network.
 
 ## Disclaimer
 
-The S31 Lite is an ETL-listed appliance that switches mains voltage. Flash it
+The S31 is an ETL-listed appliance that switches mains voltage. Flash it
 **disconnected from mains**, don't modify its high-voltage side, and reassemble
-the case before use. Match the dehumidifier's running current against the S31's
-rating. This project is shared as-is, with no warranty; you are responsible for
-safe installation and for the compressor-protection timings you set.
+the case before use. Verify the load against
+[Load and relay rating](#load-and-relay-rating). This project is shared as-is,
+with no warranty; you are responsible for safe installation and for the
+compressor-protection timings you set.
 
 ---
 
