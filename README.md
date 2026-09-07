@@ -3,38 +3,78 @@
 [![ci](https://github.com/blankschematic/esphome-dehumidifier-controller/actions/workflows/ci.yml/badge.svg)](https://github.com/blankschematic/esphome-dehumidifier-controller/actions/workflows/ci.yml)
 [![secret-scan](https://github.com/blankschematic/esphome-dehumidifier-controller/actions/workflows/secret-scan.yml/badge.svg)](https://github.com/blankschematic/esphome-dehumidifier-controller/actions/workflows/secret-scan.yml)
 
-A standalone humidistat for a basement dehumidifier whose built-in control has
-almost no hysteresis and short-cycles the compressor. This replaces it with a
-**wide adjustable deadband** plus an **anti-short-cycle minimum-off timer**.
+A basement dehumidifier's built-in humidistat has almost no hysteresis — it
+restarts within ~30 s of finishing a cycle and short-cycles the compressor.
+This replaces it with a **wide, adjustable deadband** plus an
+**anti-short-cycle minimum-off timer**: far fewer compressor starts, lower
+energy use. A 5–15 %RH swing in the room is fine — precision is not the goal.
 
-Two ESP devices talk directly to each other over HTTP — **no Home Assistant, no
-MQTT, no cloud**. Each raises its own Wi-Fi AP + captive portal on first boot,
-so it can be onboarded onto an unknown network.
+Two small ESP boxes do it between themselves over your Wi-Fi — **no Home
+Assistant, no MQTT, no cloud**. Each raises its own Wi-Fi hotspot on first boot
+for onboarding, so it works on a network it has never seen.
 
+```text
+ SHT41  ──I²C──▶  ESP32  ──Wi-Fi──▶  Sonoff S31  ──mains──▶  Dehumidifier
+ humidity         Box A               Box B
+                  reads RH,           switches the load,
+                  runs the logic      enforces compressor limits
 ```
-  ┌─────────────────────────┐        HTTP POST         ┌──────────────────────────┐
-  │  Controller  (Box A)    │  /switch/relay/turn_on   │   Plug  (Box B)          │
-  │  Wemos ESP32 + SHT41    │ ───────────────────────► │   Sonoff S31 Lite        │
-  │  reads RH, runs the     │  /switch/relay/turn_off  │   switches 120 VAC to    │
-  │  deadband + timers      │ ◄─────────────────────── │   the dehumidifier      │
-  │  low voltage only       │      200 / 401 / ...     │   ETL-listed, fail-safe  │
-  └─────────────────────────┘                          └──────────────────────────┘
+
+## Quick start
+
+- **Parts:** a Wemos/LOLIN ESP32 + an SHT4x breakout, a **Wi-Fi** Sonoff S31
+  Lite, a 3.3 V USB-serial adapter, and a computer with Python.
+  ([full list](#what-you-need))
+- **Build and flash:**
+  ```bash
+  pip install esphome
+  git clone https://github.com/blankschematic/esphome-dehumidifier-controller.git
+  cd esphome-dehumidifier-controller
+  cp secrets.yaml.example secrets.yaml         # then edit it
+  esphome run dehumidifier-plug.yaml           # USB-serial, S31 off mains
+  esphome run dehumidifier-controller.yaml     # USB
+  ```
+  ([step by step](#1-get-the-files))
+- **Two versions:** the `*-simple.yaml` files are for learning — one file each,
+  no guard rails. The plain-named ones are for real use (compressor protection,
+  auth, watchdog). Run a **matched pair**.
+- **New to ESPHome?** Read `dehumidifier-plug-simple.yaml` first — it's ~40
+  lines and does the whole job minus the safety nets.
+
+---
+
+## How it works
+
+The **controller** samples the SHT41 every 20 s, applies the deadband and the
+timers, and each cycle **re-sends** the desired relay state to the plug (not
+only on a change) — so a plug reboot re-syncs within one cycle. It reads the
+HTTP status back and shows `OK` / `AUTH FAILED` / `UNREACHABLE` / `HTTP ERROR`
+on its own web page.
+
+The **plug** exposes its relay over a REST endpoint and obeys — but it enforces
+its own compressor cool-off, a power-on delay, and a watchdog that cuts the
+relay if the controller goes silent. Turn-**off** is always immediate;
+turn-**on** is what the safety timers gate.
+
+```text
+  ┌─────────────────────────┐     POST /switch/relay/turn_on      ┌─────────────────────────┐
+  │  Controller  (Box A)    │     POST /switch/relay/turn_off     │   Plug  (Box B)         │
+  │  Wemos ESP32 + SHT41    │ ─────────────────────────────────▶  │   Sonoff S31 Lite       │
+  │  deadband + timers,     │ ◀─────────────────────────────────  │   relay + cool-off,     │
+  │  low voltage only       │     200 / 401 / timeout             │   watchdog, fail-safe   │
+  └─────────────────────────┘                                     └─────────────────────────┘
 ```
 
 ---
 
-## Two tiers — pick one per box, matched
+## Two versions
 
-| File | Use |
-|---|---|
-| `dehumidifier-controller-simple.yaml` / `dehumidifier-plug-simple.yaml` | **Teaching / first explanation.** One self-contained file each. Deadband + min-off timer + idempotent re-assert, and nothing else. No auth, no plug-side safety. |
-| `dehumidifier-controller.yaml` / `dehumidifier-plug.yaml` | **Full.** Everything below. Split into small reusable `packages:` (Wi-Fi, web server, board pinout) that both boxes share. |
+Run a **matched pair**: the simple controller has no auth and talks only to the
+simple (no-auth) plug; the full controller sends HTTP Basic auth and talks only
+to the full plug.
 
-Run a **matched pair** — the simple controller has no auth and talks only to
-the simple (no-auth) plug; the full controller sends HTTP Basic auth and talks
-only to the full plug.
-
-### What the guard rails add (simple → full)
+<details>
+<summary><b>What the full version adds over simple</b></summary>
 
 | Concern | Simple | Full |
 |---|---|---|
@@ -49,6 +89,8 @@ only to the full plug.
 | **Plug-side** power-on delay after a power cut | ❌ | ✅ |
 | **Plug-side** stale-command watchdog (controller dies ⇒ relay off) | ❌ | ✅ |
 | Hold-off status sensors + force/bypass button on the plug page | ❌ | ✅ |
+
+</details>
 
 ---
 
@@ -151,28 +193,31 @@ your Wi-Fi.
 > To browse/edit configs in a local web UI instead of the CLI, run
 > `esphome dashboard .` in this folder and open <http://localhost:6052>.
 
+<details>
+<summary><b>Build notes — flash headroom, shared build dir, verified version</b></summary>
+
 **Verified with ESPHome 2026.8.1** — all four configs compile. Flash use: plug
 43 %, controller 56 %. Both leave ample room; `web_server v2 local` fits the
 S31 Lite fine.
 
-> The two controller configs share the mDNS name `dehumidifier-controller`
-> (likewise the two plug configs), so they also share an
-> `.esphome/build/…` directory — switching between simple and full triggers a
-> clean rebuild. Harmless; you only ever flash one of each pair.
+The two controller configs share the mDNS name `dehumidifier-controller`
+(likewise the two plug configs), so they also share an `.esphome/build/…`
+directory — switching between simple and full triggers a clean rebuild.
+Harmless; you only ever flash one of each pair.
 
-### If the plug ever overflows flash (not currently an issue)
+**If the plug ever overflows flash** (at 43 % it isn't close, but a future
+ESPHome release could change that): `web_server: version: 2` + `local: true` is
+the biggest consumer and the first thing to trim —
 
-At 43 % it isn't close. If a future ESPHome release changes that,
-`web_server: version: 2` + `local: true` is the biggest consumer and the first
-thing to trim:
-
-1. Drop `local: true` from `packages/web-server.yaml` (keeps `version: 2`; the plug's
-   *page* then needs internet to load its JS, but the **REST endpoint still
-   works fully offline** — that's all the controller uses).
+1. Drop `local: true` from `packages/web-server.yaml` (keeps `version: 2`; the
+   plug's *page* then needs internet to load its JS, but the **REST endpoint
+   still works fully offline** — that's all the controller uses).
 2. Or drop the `web_server` package from the plug entirely and rely on the
    controller's telemetry. You lose the on-device hold-off display.
 3. `esphome compile` reports the flash figure; OTA needs the image under
    roughly half of flash.
+
+</details>
 
 ---
 
@@ -244,22 +289,21 @@ expires. No queue.
 
 ---
 
-## How it behaves (acceptance checks)
+## What to expect
 
-- **Cold boot:** plug relay off; controller asserts the correct state within one
-  `sample_interval` (20 s).
-- **No Home Assistant:** neither device reboot-loops (`api: reboot_timeout: 0s`).
-- Crossing `RH on` turns the dehumidifier on (after `Min off minutes`); crossing
-  `RH off` turns it off.
-- **Kill the controller:** plug forces itself off within `Stale-command timeout`
-  *(full)*.
-- **Plug power blip:** on reboot the plug comes up off and re-syncs to the
-  controller's desired state within one cycle. *(Full)* the first turn-on waits
-  out `Power-on delay` unless you press force.
-- Setpoints persist across reboot.
-- *(Full)* an unauthenticated `POST /switch/relay/turn_on` to the plug is
-  rejected; the controller's page shows `AUTH FAILED` for wrong credentials and
-  `UNREACHABLE` for a bad `Plug target`.
+- **Cold boot:** the plug relay is off; the controller sets the right state
+  within ~20 s.
+- **No Home Assistant on the network:** neither box reboot-loops.
+- RH climbs past `RH on` → the dehumidifier runs, once `Min off minutes` allows.
+  RH drops past `RH off` → it stops.
+- **Full:** if the controller loses power or crashes, the plug cuts the relay
+  within `Stale-command timeout`.
+- **Full:** after a power blip the plug comes back off and waits out
+  `Power-on delay` before the first restart (or press **Force**).
+- Setpoints survive a reboot.
+- **Full:** the relay endpoint rejects unauthenticated requests. Wrong
+  credentials show as `AUTH FAILED` and a bad `Plug target` as `UNREACHABLE` on
+  the controller page.
 
 ---
 
