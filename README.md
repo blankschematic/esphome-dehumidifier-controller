@@ -276,13 +276,12 @@ Both devices ship not knowing your Wi-Fi.
 
 The controller **does not do mDNS lookups**. Resolving a `.local` name from an
 ESP is slow to fail and was stalling the control loop hard enough to reboot the
-device; the firmware disables resolver mDNS on purpose. So the default
-`Plug target` of `dehumidifier-plug.local` **will not resolve** — you must set
-it to the plug's IP:
+device; the firmware disables resolver mDNS on purpose. The **`Plug IP
+address`** field must be an IP — a `.local` name won't resolve.
 
 1. Open the **plug's** own web page, read its **`IP Address`** sensor
    (e.g. `192.168.1.57`).
-2. On the **controller's** page, set **`Plug target`** to that IP.
+2. On the **controller's** page, set **`Plug IP address`** to that IP.
 3. No reflash. Set a **DHCP reservation** for the plug so the IP is stable.
 
 Until you do, `Last command outcome` reads `UNREACHABLE` and the relay stays
@@ -308,7 +307,7 @@ On the **controller** page:
 | `RH off` | 50 % | 25–75 | at/below this, want it OFF (auto-clamped below `RH on`) |
 | `Min off minutes` | 5 | 1–30 | compressor rest before another start |
 | `Min on minutes` | 1 | 0–30 | *(full only)* minimum run once started |
-| `Plug target` | `dehumidifier-plug.local` | — | **set this to the plug's IP** — the controller doesn't do mDNS ([why](#addressing-use-the-plugs-ip--important)) |
+| `Plug IP address` | `192.168.1.2` | — | the plug's IP — **not** a `.local` name ([why](#addressing-use-the-plugs-ip--important)) |
 
 Between `RH off` and `RH on` the controller **holds** whatever it last decided —
 that band is the whole point; a 5–15 %RH swing in the room is fine.
@@ -343,7 +342,7 @@ expires. No queue.
   `Power-on delay` before the first restart (or press **Force**).
 - Setpoints survive a reboot.
 - **Full:** the relay endpoint rejects unauthenticated requests. Wrong
-  credentials show as `AUTH FAILED` and a bad `Plug target` as `UNREACHABLE` on
+  credentials show as `AUTH FAILED` and a bad `Plug IP address` as `UNREACHABLE` on
   the controller page.
 
 ---
@@ -361,7 +360,7 @@ it 5 V). Wired to pins other than GPIO21/22? Set
 is unhealthy the controller holds the dehumidifier **off** — that's the
 dead-sensor safety, not a bug.
 
-**Controller: `Last command outcome` = `UNREACHABLE`.** Set `Plug target` to the
+**Controller: `Last command outcome` = `UNREACHABLE`.** Set `Plug IP address` to the
 plug's **IP**, not `.local` — see [Addressing](#addressing-use-the-plugs-ip--important).
 
 **Wi-Fi log: `Authentication Failed`, then connects on the retry.** Harmless

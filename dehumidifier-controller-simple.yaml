@@ -144,11 +144,12 @@ number:
 
 text:
   - platform: template
-    name: "Plug target  (hostname or IP)"
+    # mDNS is disabled on the controller — enter the plug's IP address.
+    name: "Plug IP address"
     id: s31_target
     optimistic: true
     restore_value: true
-    initial_value: "dehumidifier-plug.local"
+    initial_value: "192.168.1.2"
     mode: text
 
 text_sensor:

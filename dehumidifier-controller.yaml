@@ -114,11 +114,13 @@ number:
 
 text:
   - platform: template
-    name: "Plug target  (hostname or IP)"
+    # The controller has mDNS resolution disabled (a .local lookup stalls the
+    # loop). Enter the plug's IP here — a DHCP reservation keeps it stable.
+    name: "Plug IP address"
     id: s31_target
     optimistic: true
     restore_value: true
-    initial_value: "dehumidifier-plug.local"
+    initial_value: "192.168.1.2"
     mode: text
 
 # --- runtime state --------------------------------------------------------

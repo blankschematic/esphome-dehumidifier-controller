@@ -147,10 +147,18 @@ switch:
           id(relay_gpio).turn_on();
     turn_off_action:
       - lambda: |-
-          id(last_cmd_ms) = millis();             // refresh watchdog
+          id(last_cmd_ms) = millis();             // any inbound command feeds the watchdog
+          bool was_on = id(relay_gpio).state;
           id(relay_gpio).turn_off();              // immediate, never gated
-          id(last_off_ms) = millis();
-          id(have_last_off) = true;
+          if (was_on) {
+            // Stamp the cool-off ONLY on a real ON->OFF transition. The
+            // controller re-asserts turn_off every ~20s while it wants OFF;
+            // stamping on those would keep last_off_ms perpetually "now" and
+            // the cool-off window would never expire, so the next real turn-on
+            // would always be blocked for the full PLUG_MIN_OFF.
+            id(last_off_ms) = millis();
+            id(have_last_off) = true;
+          }
           id(holdoff_flag) = false;
 
 # --- force / bypass — PLUG PAGE ONLY, deliberate override --------------
