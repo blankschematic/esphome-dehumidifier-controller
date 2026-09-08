@@ -55,9 +55,12 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p dist
-          root=".esphome/build/${{ matrix.config }}"
-          factory=$(find "$root" -name firmware.factory.bin | head -1)
-          ota=$(find "$root" -name firmware.ota.bin | head -1)
+          # The build dir is named by `esphome: name:`, which the -simple
+          # configs share with the full ones. Each matrix job builds exactly
+          # one config, so there is exactly one firmware image to find.
+          factory=$(find .esphome/build -name firmware.factory.bin | head -1)
+          ota=$(find .esphome/build -name firmware.ota.bin | head -1)
+          test -n "$factory" -a -n "$ota"
           cp "$factory" "dist/${{ matrix.config }}.factory.bin"
           cp "$ota"     "dist/${{ matrix.config }}.ota.bin"
           cat > "dist/${{ matrix.config }}.manifest.json" <<JSON
