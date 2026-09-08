@@ -312,6 +312,11 @@ On the **controller** page:
 Between `RH off` and `RH on` the controller **holds** whatever it last decided —
 that band is the whole point; a 5–15 %RH swing in the room is fine.
 
+`RH off` is always kept at least 1 below `RH on` (no inverted deadband). If you
+move the band a long way, set the value you're raising **first**: widening up,
+set `RH on` before `RH off`; widening down, set `RH off` before `RH on` —
+otherwise the one you set first gets clamped against the old value of the other.
+
 On the **plug** page (full config):
 
 | Field | Default | Meaning |
