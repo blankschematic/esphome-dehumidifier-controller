@@ -230,9 +230,10 @@ your Wi-Fi.
 <details>
 <summary><b>Build notes — flash headroom, shared build dir, verified version</b></summary>
 
-**Verified with ESPHome 2026.8.1** — all four configs compile. Flash use: plug
-43 %, controller 56 %. Both leave ample room; `web_server v2 local` fits the
-S31 Lite fine.
+**Verified with ESPHome 2026.8.1** — all four configs compile (CI), and the
+full pair passed an end-to-end hardware test ([TESTING.md](TESTING.md)). Flash
+use: plug 43 %, controller 54 %. Both leave ample room; `web_server v2 local`
+fits the S31 Lite fine.
 
 The two controller configs share the mDNS name `dehumidifier-controller`
 (likewise the two plug configs), so they also share an `.esphome/build/…`
@@ -350,6 +351,9 @@ expires. No queue.
   credentials show as `AUTH FAILED` and a bad `Plug IP address` as `UNREACHABLE` on
   the controller page.
 
+Every item above was checked on real hardware — see [TESTING.md](TESTING.md)
+for the method and results, and what wasn't covered.
+
 ---
 
 ## Troubleshooting
@@ -416,6 +420,7 @@ packages/
 
 secrets.yaml.example         copy to secrets.yaml
 SPEC.md                      original design brief / rationale
+TESTING.md                   CI + hardware verification, what was and wasn't checked
 ```
 
 The files in `packages/` are ESPHome **packages**, `!include`d by the
