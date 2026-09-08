@@ -272,18 +272,25 @@ Both devices ship not knowing your Wi-Fi.
 
 ---
 
-## Addressing: mDNS vs IP  — important
+## Addressing: use the plug's IP — important
 
-`http_request` to a `.local` mDNS name is **not reliably resolvable on ESP**.
+The controller **does not do mDNS lookups**. Resolving a `.local` name from an
+ESP is slow to fail and was stalling the control loop hard enough to reboot the
+device; the firmware disables resolver mDNS on purpose. So the default
+`Plug target` of `dehumidifier-plug.local` **will not resolve** — you must set
+it to the plug's IP:
 
-- The controller's **`Plug target`** field defaults to
-  `dehumidifier-plug.local`. That works *when* mDNS resolution happens to work.
-- If the controller's `Last command outcome` shows **`UNREACHABLE`** even
-  though the plug is up:
-  1. Open the **plug's** own web page, read its **`IP Address`** sensor
-     (e.g. `192.168.1.57`).
-  2. On the **controller's** page, set **`Plug target`** to that IP.
-  3. No reflash. Consider a DHCP reservation for the plug so the IP is stable.
+1. Open the **plug's** own web page, read its **`IP Address`** sensor
+   (e.g. `192.168.1.57`).
+2. On the **controller's** page, set **`Plug target`** to that IP.
+3. No reflash. Set a **DHCP reservation** for the plug so the IP is stable.
+
+Until you do, `Last command outcome` reads `UNREACHABLE` and the relay stays
+off — which is the safe state.
+
+(This only affects the controller *resolving* the plug. Both devices still
+**announce** themselves, so `http://dehumidifier-controller.local` /
+`http://dehumidifier-plug.local` from your browser are unaffected.)
 
 Find each device's page from another machine on the LAN:
 `http://dehumidifier-controller.local` / `http://dehumidifier-plug.local`, or
@@ -301,7 +308,7 @@ On the **controller** page:
 | `RH off` | 50 % | 25–75 | at/below this, want it OFF (auto-clamped below `RH on`) |
 | `Min off minutes` | 5 | 1–30 | compressor rest before another start |
 | `Min on minutes` | 1 | 0–30 | *(full only)* minimum run once started |
-| `Plug target` | `dehumidifier-plug.local` | — | hostname or IP of the plug |
+| `Plug target` | `dehumidifier-plug.local` | — | **set this to the plug's IP** — the controller doesn't do mDNS ([why](#addressing-use-the-plugs-ip--important)) |
 
 Between `RH off` and `RH on` the controller **holds** whatever it last decided —
 that band is the whole point; a 5–15 %RH swing in the room is fine.
@@ -338,6 +345,34 @@ expires. No queue.
 - **Full:** the relay endpoint rejects unauthenticated requests. Wrong
   credentials show as `AUTH FAILED` and a bad `Plug target` as `UNREACHABLE` on
   the controller page.
+
+---
+
+## Troubleshooting
+
+**Controller log: `sht4x: Communication failed` / I²C scan `Found no devices`.**
+Nothing is acknowledging on the I²C bus. The ESP32's internal pull-ups are
+enabled but only ~45 kΩ — too weak for I²C on anything but the shortest
+wiring. In order of likelihood: the SHT4x breakout has no pull-ups and needs
+external **4.7 kΩ from SDA→3V3 and SCL→3V3**; SDA/SCL are swapped; a cold
+solder joint; the sensor isn't getting ~3.3 V (measure at its pins — never feed
+it 5 V). Wired to pins other than GPIO21/22? Set
+`substitutions: { i2c_sda_pin: GPIOxx, i2c_scl_pin: GPIOyy }`. While the sensor
+is unhealthy the controller holds the dehumidifier **off** — that's the
+dead-sensor safety, not a bug.
+
+**Controller: `Last command outcome` = `UNREACHABLE`.** Set `Plug target` to the
+plug's **IP**, not `.local` — see [Addressing](#addressing-use-the-plugs-ip--important).
+
+**Wi-Fi log: `Authentication Failed`, then connects on the retry.** Harmless
+noise from ESP32 power-save; the configs set `power_save_mode: none` +
+`fast_connect: true` to suppress it. If it persists, your AP may be WPA3-only
+with a fussy transition mode.
+
+**Either device reboots every ~20–30 s (`task_wdt` / `Unsuccessful boot
+attempts` climbing).** A blocking network call was tripping the task watchdog.
+Fixed in firmware (resolver mDNS disabled, watchdog window widened, requests
+gated on Wi-Fi) — reflash if you're on an older build.
 
 ---
 

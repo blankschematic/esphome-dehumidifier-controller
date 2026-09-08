@@ -1,7 +1,9 @@
 # ESPHome package: "Controller" box hardware — Wemos/LOLIN ESP32 + Sensirion
 # SHT41 on I2C. Low-voltage only; never touches mains.
 #
-# [VERIFY] Wemos/LOLIN ESP32 D1 mini: I2C default SDA=GPIO21, SCL=GPIO22.
+# [VERIFY] I2C pins. GPIO21/GPIO22 are the ESP32 default and correct for a
+#          healthy WROOM-32. Override per device if you wired the SHT4x to
+#          other pins:  substitutions: { i2c_sda_pin: GPIO16, i2c_scl_pin: GPIO17 }
 # [VERIFY] SHT41 I2C address 0x44 (fixed on the SHT4x family; 0x45 only on
 #          the -B option part).
 #
@@ -17,6 +19,8 @@ substitutions:
   model_name: "Wemos ESP32 + SHT41"
   # Control-loop / sensor sample cadence, and the plug re-assert cadence.
   sample_interval: "20s"
+  i2c_sda_pin: GPIO21
+  i2c_scl_pin: GPIO22
 
 esphome:
   name: ${esphome_name}
@@ -25,11 +29,25 @@ esphome:
 esp32:
   board: wemos_d1_mini32
   framework:
-    type: arduino
+    type: esp-idf
+    advanced:
+      # The controller resolves the plug's address itself. An mDNS (.local)
+      # lookup from an ESP is slow to *fail* (~5-15 s of retries) and runs on
+      # the main loop — long enough to trip the task watchdog into a reboot
+      # loop when the plug isn't reachable. Disable resolver mDNS so a .local
+      # target fails fast; put the plug's IP in `s31_target`. (The controller
+      # still ANNOUNCES itself — http://dehumidifier-controller.local from a
+      # browser is unaffected.)
+      enable_lwip_mdns_queries: false
+    sdkconfig_options:
+      # Belt and braces: a stalled http_request (unreachable plug, slow DNS)
+      # must fail the command and move on, never panic-reboot. The plug has
+      # its own stale-command watchdog for a genuinely dead controller.
+      CONFIG_ESP_TASK_WDT_TIMEOUT_S: "15"
 
 i2c:
-  sda: GPIO21
-  scl: GPIO22
+  sda: ${i2c_sda_pin}
+  scl: ${i2c_scl_pin}
   scan: true
 
 sensor:
@@ -44,6 +62,7 @@ sensor:
       id: sensor_humidity
 
 # HTTP client used to command the plug. url:/headers accept lambdas.
+# timeout bounds the connect+transfer phase (not DNS — see the esp32 note above).
 http_request:
-  timeout: 4s
+  timeout: 3s
   useragent: dehumidifier-controller

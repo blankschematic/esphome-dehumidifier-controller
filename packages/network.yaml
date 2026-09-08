@@ -19,6 +19,11 @@
 wifi:
   ssid: !secret wifi_ssid
   password: !secret wifi_password
+  # power_save_mode: none — the ESP32 radio's default light-sleep adds latency
+  # and, on some APs, causes the intermittent "Authentication Failed" retry we
+  # were seeing. fast_connect skips the scan and associates directly.
+  power_save_mode: none
+  fast_connect: true
   # First boot, or whenever the target network can't be joined: raise our own
   # AP so captive_portal can collect the real credentials. The device is
   # handed to a third party, so the join network is unknown at build time.

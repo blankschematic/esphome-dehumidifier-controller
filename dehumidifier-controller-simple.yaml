@@ -39,7 +39,15 @@ esphome:
 esp32:
   board: wemos_d1_mini32
   framework:
-    type: arduino
+    type: esp-idf
+    advanced:
+      # An mDNS (.local) lookup from an ESP is slow to fail and blocks the
+      # loop long enough to reboot-loop the device when the plug is
+      # unreachable. Disable resolver mDNS — use the plug's IP in s31_target.
+      enable_lwip_mdns_queries: false
+    sdkconfig_options:
+      # A stalled http_request must fail the command, never panic-reboot.
+      CONFIG_ESP_TASK_WDT_TIMEOUT_S: "15"
 
 logger:
 
@@ -53,6 +61,8 @@ ota:
 wifi:
   ssid: !secret wifi_ssid
   password: !secret wifi_password
+  power_save_mode: none
+  fast_connect: true
   ap:
     ssid: ${esphome_name}
     password: !secret fallback_ap_password
@@ -64,13 +74,13 @@ web_server:
   version: 2
   local: true
 
-# Wemos/LOLIN ESP32 D1 mini default I2C pins.
+# ESP32 default I2C pins. If you wired the SHT4x elsewhere, change these.
 i2c:
   sda: GPIO21
   scl: GPIO22
 
 http_request:
-  timeout: 4s
+  timeout: 3s
 
 globals:
   - id: want_on            # hysteresis output
@@ -164,7 +174,10 @@ interval:
           bool cmd = id(want_on) && !cooling;
           if (!cmd && id(cmd_on)) id(last_off_ms) = millis();   // just went off
           id(cmd_on) = cmd;
-      - script.execute: assert_relay
+      - if:
+          condition: wifi.connected
+          then:
+            - script.execute: assert_relay
 
 script:
   - id: assert_relay

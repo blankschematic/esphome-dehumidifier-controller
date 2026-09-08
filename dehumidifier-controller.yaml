@@ -276,7 +276,13 @@ interval:
             std::string(id(want_on) ? "ON" : "OFF") +
             (id(want_on) == id(cmd_on) ? "" : " (waiting on timer)"));
 
-      # 4. idempotent re-assert every cycle — a plug reboot re-syncs in <=1 cycle
-      - script.execute:
-          id: assert_relay
-          turn_on: !lambda "return id(cmd_on);"
+      # 4. idempotent re-assert every cycle — a plug reboot re-syncs in <=1 cycle.
+      #    Skip the POST entirely until Wi-Fi is up (avoids a pointless blocking
+      #    request during the boot window).
+      - if:
+          condition:
+            wifi.connected:
+          then:
+            - script.execute:
+                id: assert_relay
+                turn_on: !lambda "return id(cmd_on);"
