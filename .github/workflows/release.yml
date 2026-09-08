@@ -1,0 +1,106 @@
+name: release
+
+# Tag a commit `vX.Y.Z` and push the tag to cut a release:
+#   git tag v1.0.0 -m "..." && git push origin v1.0.0
+# Builds firmware for all four configs and attaches, per config:
+#   <config>.factory.bin   full-flash image (serial, or ESP Web Tools)
+#   <config>.ota.bin       wireless update (upload via the device's web UI)
+#   <config>.manifest.json ESP Web Tools manifest (browser install)
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version for a manual build (no release is published)"
+        default: "0.0.0-dev"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { config: dehumidifier-controller,        chip: ESP32 }
+          - { config: dehumidifier-plug,              chip: ESP8266 }
+          - { config: dehumidifier-controller-simple, chip: ESP32 }
+          - { config: dehumidifier-plug-simple,       chip: ESP8266 }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Resolve version
+        id: v
+        run: |
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=${{ github.event.inputs.version }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - run: pip install esphome
+      - run: cp secrets.yaml.example secrets.yaml
+
+      - name: Compile
+        run: esphome compile ${{ matrix.config }}.yaml
+
+      - name: Stage artifacts
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          root=".esphome/build/${{ matrix.config }}"
+          factory=$(find "$root" -name firmware.factory.bin | head -1)
+          ota=$(find "$root" -name firmware.ota.bin | head -1)
+          cp "$factory" "dist/${{ matrix.config }}.factory.bin"
+          cp "$ota"     "dist/${{ matrix.config }}.ota.bin"
+          cat > "dist/${{ matrix.config }}.manifest.json" <<JSON
+          {
+            "name": "${{ matrix.config }}",
+            "version": "${{ steps.v.outputs.version }}",
+            "new_install_prompt_erase": true,
+            "builds": [
+              {
+                "chipFamily": "${{ matrix.chip }}",
+                "parts": [ { "path": "${{ matrix.config }}.factory.bin", "offset": 0 } ]
+              }
+            ]
+          }
+          JSON
+          ls -l dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: firmware-${{ matrix.config }}
+          path: dist/*
+
+  publish:
+    needs: build
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: staging
+          merge-multiple: true
+      - run: ls -l staging
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: staging/*
+          generate_release_notes: true
+          body: |
+            Firmware for ESPHome-based two-box dehumidifier controller.
+
+            **Fresh flash (serial or browser):** use `*.factory.bin`, or the
+            `*.manifest.json` with https://esphome.github.io/esp-web-tools/.
+            **Already flashed:** upload the matching `*.ota.bin` on the device's
+            own web page.
+
+            Match a *controller* build with the *plug* build of the same tier —
+            plain names for real use, `*-simple` for the teaching version.

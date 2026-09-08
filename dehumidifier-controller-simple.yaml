@@ -120,7 +120,7 @@ number:
     step: 1
     mode: box
   - platform: template
-    name: "RH off  (turn OFF at or below %RH; keep below RH on)"
+    name: "RH off  (turn OFF at or below %RH)"
     id: rh_off
     unit_of_measurement: "%"
     optimistic: true
@@ -165,8 +165,10 @@ interval:
       - lambda: |-
           float rh = id(sensor_humidity).state;
           if (!isnan(rh)) {
-            if (rh >= id(rh_on).state)       id(want_on) = true;
-            else if (rh <= id(rh_off).state) id(want_on) = false;
+            float on = id(rh_on).state, off = id(rh_off).state;
+            if (off >= on) off = on - 1.0f;   // keep a real deadband even if set inverted
+            if (rh >= on)       id(want_on) = true;
+            else if (rh <= off) id(want_on) = false;
             // in the deadband: hold
           }
           // anti-short-cycle gate

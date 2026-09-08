@@ -2,9 +2,10 @@
 #  Dehumidifier Plug — SIMPLE / teaching version     (Sonoff S31 Lite, ESP8285)
 # =============================================================================
 #  A bare mains switch. Exposes ONE relay over a local, UNAUTHENTICATED REST
-#  endpoint. The controller box POSTs to it:
-#       POST http://dehumidifier-plug.local/switch/relay/turn_on
-#       POST http://dehumidifier-plug.local/switch/relay/turn_off
+#  endpoint. The controller box POSTs to it (by IP — the controller can't do
+#  mDNS):
+#       POST http://<plug-ip>/switch/relay/turn_on
+#       POST http://<plug-ip>/switch/relay/turn_off
 #
 #  Deliberately omitted (see dehumidifier-plug.yaml for all of it):
 #    - compressor cool-off / minimum-off timer
@@ -41,6 +42,8 @@ ota:
 wifi:
   ssid: !secret wifi_ssid
   password: !secret wifi_password
+  power_save_mode: none
+  fast_connect: true
   # First boot / lost Wi-Fi: raise our own AP, then the captive portal
   # collects the real network credentials.
   ap:
