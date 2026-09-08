@@ -52,10 +52,28 @@ sensor:
   - platform: uptime
     name: "Uptime"
     id: sys_uptime
+  - platform: uptime
+    type: seconds
+    name: "Uptime Sensor"
 
 text_sensor:
   - platform: version
     name: "ESPHome Version"
   - platform: wifi_info
+    mac_address:
+      name: "MAC Address"
+      id: text_sensor_mac_address
     ip_address:
       name: "IP Address"
+    ssid:
+      id: text_sensor_ssid
+      internal: true
+    bssid:
+      id: text_sensor_bssid
+      internal: true
+    scan_results:
+      id: text_sensor_scan_results
+      internal: true
+    dns_address:
+      id: text_sensor_dns_address
+      internal: true

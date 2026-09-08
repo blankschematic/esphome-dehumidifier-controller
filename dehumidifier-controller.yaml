@@ -200,9 +200,18 @@ script:
     then:
       - http_request.post:
           url: !lambda |-
-            std::string base = "http://" + id(s31_target).state;
-            return base + (turn_on ? "/switch/relay/turn_on"
-                                   : "/switch/relay/turn_off");
+            // Tolerate paste artifacts in the Plug target field: surrounding
+            // whitespace, a scheme, a trailing slash.
+            std::string t = id(s31_target).state;
+            const char *ws = " \t\r\n";
+            t.erase(0, t.find_first_not_of(ws));
+            size_t e = t.find_last_not_of(ws);
+            if (e != std::string::npos) t.erase(e + 1);
+            if (t.rfind("https://", 0) == 0) t.erase(0, 8);
+            else if (t.rfind("http://", 0) == 0) t.erase(0, 7);
+            if (!t.empty() && t.back() == '/') t.pop_back();
+            return "http://" + t + (turn_on ? "/switch/relay/turn_on"
+                                            : "/switch/relay/turn_off");
           request_headers:
             # HTTP Basic auth, built on the fly from the plug_user / plug_pass
             # secrets so it always matches the plug's web_server: auth:.

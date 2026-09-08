@@ -91,8 +91,9 @@ acceptable; precision is explicitly *not* a goal.
   is what makes the cool-off a real backstop rather than advice:
   - Physical relay: `platform: gpio`, `pin: GPIO12`, `id: relay_gpio`,
     `internal: true`, **`restore_mode: ALWAYS_OFF`** (safe state on power-up).
-  - Exposed control: a **template `switch`** `id: relay`, `name: "Relay"` — what
-    `web_server` and the button command. Its `turn_on_action` runs the cool-off
+  - Exposed control: a **template `switch`** `id: relay`, `name: "relay"` — what
+    `web_server` and the button command. (Name kept lowercase: current ESPHome's
+    REST path is `/switch/<name>` verbatim, case-sensitive.) Its `turn_on_action` runs the cool-off
     gate (below) before energizing `relay_gpio`; `turn_off_action` opens
     `relay_gpio` immediately and stamps the last-off time.
 - Physical button (GPIO0) → toggles the template `relay` (so the button obeys

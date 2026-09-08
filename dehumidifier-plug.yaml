@@ -105,9 +105,12 @@ globals:
     initial_value: "false"
 
 # --- the exposed relay: a template switch that gates every turn-on -------
+# NOTE: the web_server REST path is /switch/<name>, verbatim and case-sensitive
+# (current ESPHome uses the entity NAME, not a lowercased object_id). The
+# controller POSTs to /switch/relay/... so this name MUST stay lowercase "relay".
 switch:
   - platform: template
-    name: "Relay"
+    name: "relay"
     id: relay
     lambda: "return id(relay_gpio).state;"
     turn_on_action:

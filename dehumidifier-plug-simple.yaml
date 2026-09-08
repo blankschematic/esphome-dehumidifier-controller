@@ -57,9 +57,11 @@ web_server:
 
 # S31 Lite GPIO map: relay = GPIO12, green LED = GPIO13 (inverted), button = GPIO0.
 # restore_mode ALWAYS_OFF -> the dehumidifier stays off after any power cut.
+# name MUST stay lowercase "relay": the REST path is /switch/<name> verbatim, and
+# the controller POSTs to /switch/relay/turn_on|off.
 switch:
   - platform: gpio
-    name: "Relay"
+    name: "relay"
     id: relay
     pin: GPIO12
     restore_mode: ALWAYS_OFF
